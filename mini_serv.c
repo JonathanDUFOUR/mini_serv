@@ -6,7 +6,7 @@
 /*   By: jodufour <jodufour@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/12 19:48:26 by jodufour          #+#    #+#             */
-/*   Updated: 2022/11/14 22:04:47 by jodufour         ###   ########.fr       */
+/*   Updated: 2022/11/14 22:57:31 by jodufour         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -439,7 +439,7 @@ int	main(int const ac, char const *const *const av)
 	return EXIT_SUCCESS;
 }
 
-static void	__clean_shutdown(void) __attribute__((destructor));
+__attribute__((destructor))
 static void	__clean_shutdown(void)
 {
 	__client_lst_clear(&g_clients);
