@@ -6,12 +6,11 @@
 /*   By: jodufour <jodufour@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/12 19:48:26 by jodufour          #+#    #+#             */
-/*   Updated: 2022/11/14 22:57:31 by jodufour         ###   ########.fr       */
+/*   Updated: 2022/11/14 23:09:20 by jodufour         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include <netinet/in.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -400,9 +399,6 @@ int	main(int const ac, char const *const *const av)
 		write(STDERR_FILENO, "Wrong number of arguments\n", 26);
 		return EXIT_FAILURE;
 	}
-
-	// DBG
-	signal(SIGINT, &exit);
 
 	memset(&server_address, 0, sizeof(server_address));
 	FD_ZERO(&fds_read0);
