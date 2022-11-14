@@ -6,7 +6,7 @@
 /*   By: jodufour <jodufour@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/12 19:48:26 by jodufour          #+#    #+#             */
-/*   Updated: 2022/11/13 06:38:47 by jodufour         ###   ########.fr       */
+/*   Updated: 2022/11/14 18:34:50 by jodufour         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -299,7 +299,7 @@ inline static int	__receive_messages_from_clients(
 		if (FD_ISSET(node->fd, fds_read1))
 		{
 			recv_ret = recv(node->fd, buff, buff_size, 0);
-			while (recv_ret == (ssize_te)buff_size)
+			while (recv_ret == (ssize_t)buff_size)
 			{
 				buff[recv_ret] = 0;
 
