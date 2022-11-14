@@ -6,11 +6,12 @@
 /*   By: jodufour <jodufour@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/12 19:48:26 by jodufour          #+#    #+#             */
-/*   Updated: 2022/11/14 18:34:50 by jodufour         ###   ########.fr       */
+/*   Updated: 2022/11/14 22:04:47 by jodufour         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -240,9 +241,6 @@ inline static int	__accept_incoming_connection(
 		if (__send_to_all_but_one(buff, g_clients.tail->id, fds_write1))
 			return EXIT_FAILURE;
 
-		// DBG
-		printf("The client %u just arrived\n", available_id);
-
 		++available_id;
 	}
 
@@ -270,9 +268,6 @@ inline static int	__remove_client(
 	if (__send_to_all(buff, fds_write1))
 		return EXIT_FAILURE;
 
-	// DBG
-	printf("A client just left\n");
-
 	return EXIT_SUCCESS;
 }
 
@@ -284,9 +279,10 @@ inline static int	__receive_messages_from_clients(
 	fd_set const *const fds_write1)
 {
 	t_client		*node;
+	t_client		*next;
 	ssize_t			recv_ret;
-	size_t const	buff_size = 4096LU;
 	char			buff[4097LU];
+	size_t const	buff_size = sizeof(buff) - 1;
 	char			*raw;
 	char			*tmp;
 	char			*msg;
@@ -296,6 +292,8 @@ inline static int	__receive_messages_from_clients(
 	raw = NULL;
 	for (node = g_clients.head ; node ; node = node->next)
 	{
+receive_loop_start:
+
 		if (FD_ISSET(node->fd, fds_read1))
 		{
 			recv_ret = recv(node->fd, buff, buff_size, 0);
@@ -303,23 +301,31 @@ inline static int	__receive_messages_from_clients(
 			{
 				buff[recv_ret] = 0;
 
+				if (strstr(buff, "\n"))
+					break;
+
 				if (!raw)
 					raw = __strdup(buff);
 				else
 				{
-					tmp = __strjoin(raw, buff);
-					free(raw);
-					if (!tmp)
-						return EXIT_FAILURE;
-
-					raw = tmp;
+					tmp = raw;
+					raw = __strjoin(raw, buff);
+					free(tmp);
 				}
-				recv_ret = recv(node->fd, buff, sizeof(buff), 0);
+				if (!raw)
+					return EXIT_FAILURE;
+
+				recv_ret = recv(node->fd, buff, buff_size, 0);
 			}
-			if (recv_ret == -1)
+			if (recv_ret <= 0)
 			{
+				next = node->next;
 				if (__remove_client(node, fds_read0, fds_write0, fds_write1))
 					return EXIT_FAILURE;
+				if (!next)
+					break;
+				node = next;
+				goto receive_loop_start;
 			}
 			else
 			{
@@ -337,9 +343,11 @@ inline static int	__receive_messages_from_clients(
 					raw = tmp;
 				}
 
-				for (ret0 = __extract_message(&raw, &msg) ; ret0 == 1 ; ret0 = __extract_message(&raw, &msg))
+				for (ret0 = __extract_message(&raw, &tmp) ; ret0 == 1 ; ret0 = __extract_message(&raw, &tmp))
 				{
-					printf("Message received from client %u: [%s]\n", node->id, msg);
+					msg = malloc((strlen(tmp) + 19LU + 1LU) * sizeof(char));
+					sprintf(msg, "client %u: %s", node->id, tmp);
+					free(tmp);
 					ret1 = __send_to_all_but_one(msg, node->id, fds_write1);
 					free(msg);
 					if (ret1)
@@ -392,6 +400,9 @@ int	main(int const ac, char const *const *const av)
 		write(STDERR_FILENO, "Wrong number of arguments\n", 26);
 		return EXIT_FAILURE;
 	}
+
+	// DBG
+	signal(SIGINT, &exit);
 
 	memset(&server_address, 0, sizeof(server_address));
 	FD_ZERO(&fds_read0);
