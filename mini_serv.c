@@ -5,8 +5,8 @@
 /*                                                    +:+ +:+         +:+     */
 /*   By: jodufour <jodufour@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2022/11/12 19:48:26 by jodufour          #+#    #+#             */
-/*   Updated: 2022/11/14 23:09:20 by jodufour         ###   ########.fr       */
+/*   Created: 2022/11/15 00:05:57 by jodufour          #+#    #+#             */
+/*   Updated: 2022/11/15 02:43:28 by jodufour         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -19,17 +19,25 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-/******************************************************************************/
-/*                                  TYPEDEFS                                  */
-/******************************************************************************/
+//////////////
+// Typedefs //
+//////////////
 
-typedef struct s_client_lst	t_client_lst;
-typedef struct s_client		t_client;
 typedef unsigned int		t_uint;
+typedef struct s_client		t_client;
+typedef struct s_client_lst	t_client_lst;
 
-/******************************************************************************/
-/*                                 STRUCTURES                                 */
-/******************************************************************************/
+////////////////
+// Structures //
+////////////////
+
+struct s_client
+{
+	int			fd;
+	t_uint		id;
+	t_client	*prev;
+	t_client	*next;
+};
 
 struct s_client_lst
 {
@@ -38,36 +46,28 @@ struct s_client_lst
 	size_t		size;
 };
 
-struct s_client
-{
-	int			fd;
-	t_uint		id;
-	t_client	*next;
-	t_client	*prev;
-};
-
-/******************************************************************************/
-/*                              GLOBAL VARIABLES                              */
-/******************************************************************************/
+//////////////////////
+// Global variables //
+//////////////////////
 
 static int			g_server_sockfd = -1;
 static t_client_lst	g_clients = {NULL, NULL, 0LU};
 
-/*****************************************************************************/
-/*                                 FUNCTIONS                                 */
-/*****************************************************************************/
+/////////////////////
+// Utils functions //
+/////////////////////
 
 inline static t_client	*__client_new(int const fd, t_uint const id)
 {
-	t_client *const	node = calloc(1LU, sizeof(t_client));
+	t_client *const	output = calloc(1LU, sizeof(t_client));
 
-	if (!node)
+	if (!output)
 		return NULL;
 
-	node->fd = fd;
-	node->id = id;
+	output->fd = fd;
+	output->id = id;
 
-	return node;
+	return output;
 }
 
 __attribute__((nonnull))
@@ -76,10 +76,8 @@ inline static void	__client_lst_push_back(t_client_lst *const lst, t_client *con
 	if (!lst->size)
 		lst->head = node;
 	else
-	{
 		lst->tail->next = node;
-		node->prev = lst->tail;
-	}
+	node->prev = lst->tail;
 	lst->tail = node;
 	++lst->size;
 }
@@ -90,28 +88,27 @@ inline static int	__client_lst_add_back(t_client_lst *const lst, int const fd, t
 	t_client *const	node = __client_new(fd, id);
 
 	if (!node)
-		return EXIT_FAILURE;
-
+		return -1;
 	__client_lst_push_back(lst, node);
-
-	return EXIT_SUCCESS;
+	return 0;
 }
 
 __attribute__((nonnull))
 inline static void	__client_lst_del_one(t_client_lst *const lst, t_client *const node)
 {
-	if (lst->head == node)
-		lst->head = node->next;
-	else
+	if (node->prev)
 		node->prev->next = node->next;
-
-	if (lst->tail == node)
-		lst->tail = node->prev;
 	else
+		lst->head = lst->head->next;
+
+	if (node->next)
 		node->next->prev = node->prev;
+	else
+		lst->tail = lst->tail->prev;
 
 	--lst->size;
 
+	close(node->fd);
 	free(node);
 }
 
@@ -121,42 +118,15 @@ inline static void	__client_lst_clear(t_client_lst *const lst)
 	t_client	*node;
 	t_client	*next;
 
-	for (node = lst->head ; node ; node = next)
+	node = lst->head;
+	while (node)
 	{
 		next = node->next;
+		close(node->fd);
 		free(node);
+		node = next;
 	}
-	lst->head = NULL;
-	lst->tail = NULL;
-	lst->size = 0LU;
-}
-
-__attribute__((nonnull))
-inline static int	__extract_message(char **const raw, char **const msg)
-{
-	char	*new_raw;
-	size_t	idx;
-
-	*msg = NULL;
-
-	if (!*raw)
-		return 0;
-
-	for (idx = 0LU ; (*raw)[idx] ; ++idx)
-		if ((*raw)[idx] == '\n')
-		{
-			new_raw = malloc((strlen(*raw + idx + 1) + 1) * sizeof(char));
-			if (!new_raw)
-				return -1;
-
-			strcpy(new_raw, *raw + idx + 1);
-			*msg = *raw;
-			(*msg)[idx + 1] = 0;
-			*raw = new_raw;
-			return 1;
-		}
-
-	return 0;
+	memset(lst, 0, sizeof(t_client_lst));
 }
 
 __attribute__((nonnull))
@@ -166,9 +136,7 @@ inline static char	*__strdup(char const *const str)
 
 	if (!output)
 		return NULL;
-
 	strcpy(output, str);
-
 	return output;
 }
 
@@ -179,198 +147,37 @@ inline static char	*__strjoin(char const *const str0, char const *const str1)
 
 	if (!output)
 		return NULL;
-
 	strcpy(output, str0);
 	strcat(output, str1);
-
 	return output;
 }
 
 __attribute__((nonnull))
-inline static int	__send_to_all(char const *const msg, fd_set const *const fds_write1)
+inline static int	__extract_message(char **buf, char **msg)
 {
-	t_client	*node;
+	char	*newbuf;
+	int		i;
 
-	for (node = g_clients.head ; node ; node = node->next)
-		if (FD_ISSET(node->fd, fds_write1))
-			if (send(node->fd, msg, strlen(msg), 0) == -1)
-				return EXIT_FAILURE;
-
-	return EXIT_SUCCESS;
-}
-
-__attribute__((nonnull))
-inline static int	__send_to_all_but_one(char const *const msg, t_uint const id, fd_set const *const fds_write1)
-{
-	t_client	*node;
-
-	for (node = g_clients.head ; node ; node = node->next)
-		if (FD_ISSET(node->fd, fds_write1) && node->id != id)
-			if (send(node->fd, msg, strlen(msg), 0) == -1)
-				return EXIT_FAILURE;
-
-	return EXIT_SUCCESS;
-}
-
-__attribute__((nonnull))
-inline static int	__accept_incoming_connection(
-	fd_set *const fds_read0,
-	fd_set const *const fds_read1,
-	fd_set *const fds_write0,
-	fd_set const *const fds_write1)
-{
-	static t_uint	available_id = 0U;
-	char			buff[40LU];
-	int				sockfd;
-
-	if (FD_ISSET(g_server_sockfd, fds_read1))
+	*msg = 0;
+	if (*buf == 0)
+		return (0);
+	i = 0;
+	while ((*buf)[i])
 	{
-		sockfd = accept(g_server_sockfd, NULL, NULL);
-		if (sockfd == -1)
-			return EXIT_FAILURE;
-
-		FD_SET(sockfd, fds_read0);
-		FD_SET(sockfd, fds_write0);
-
-		sprintf(buff, "server: client %u just arrived\n", available_id);
-
-		if (__client_lst_add_back(&g_clients, sockfd, available_id))
-			return EXIT_FAILURE;
-
-		if (__send_to_all_but_one(buff, g_clients.tail->id, fds_write1))
-			return EXIT_FAILURE;
-
-		++available_id;
-	}
-
-	return EXIT_SUCCESS;
-}
-
-__attribute__((nonnull))
-inline static int	__remove_client(
-	t_client *const node,
-	fd_set *const fds_read0,
-	fd_set *const fds_write0,
-	fd_set const *const fds_write1)
-{
-	char	buff[37LU];
-
-	close(node->fd);
-
-	FD_CLR(node->fd, fds_read0);
-	FD_CLR(node->fd, fds_write0);
-
-	sprintf(buff, "server: client %u just left\n", node->id);
-
-	__client_lst_del_one(&g_clients, node);
-
-	if (__send_to_all(buff, fds_write1))
-		return EXIT_FAILURE;
-
-	return EXIT_SUCCESS;
-}
-
-__attribute__((nonnull))
-inline static int	__receive_messages_from_clients(
-	fd_set *const fds_read0,
-	fd_set const *const fds_read1,
-	fd_set *const fds_write0,
-	fd_set const *const fds_write1)
-{
-	t_client		*node;
-	t_client		*next;
-	ssize_t			recv_ret;
-	char			buff[4097LU];
-	size_t const	buff_size = sizeof(buff) - 1;
-	char			*raw;
-	char			*tmp;
-	char			*msg;
-	int				ret0;
-	int				ret1;
-
-	raw = NULL;
-	for (node = g_clients.head ; node ; node = node->next)
-	{
-receive_loop_start:
-
-		if (FD_ISSET(node->fd, fds_read1))
+		if ((*buf)[i] == '\n')
 		{
-			recv_ret = recv(node->fd, buff, buff_size, 0);
-			while (recv_ret == (ssize_t)buff_size)
-			{
-				buff[recv_ret] = 0;
-
-				if (strstr(buff, "\n"))
-					break;
-
-				if (!raw)
-					raw = __strdup(buff);
-				else
-				{
-					tmp = raw;
-					raw = __strjoin(raw, buff);
-					free(tmp);
-				}
-				if (!raw)
-					return EXIT_FAILURE;
-
-				recv_ret = recv(node->fd, buff, buff_size, 0);
-			}
-			if (recv_ret <= 0)
-			{
-				next = node->next;
-				if (__remove_client(node, fds_read0, fds_write0, fds_write1))
-					return EXIT_FAILURE;
-				if (!next)
-					break;
-				node = next;
-				goto receive_loop_start;
-			}
-			else
-			{
-				buff[recv_ret] = 0;
-
-				if (!raw)
-					raw = __strdup(buff);
-				else
-				{
-					tmp = __strjoin(raw, buff);
-					free(raw);
-					if (!tmp)
-						return EXIT_FAILURE;
-
-					raw = tmp;
-				}
-
-				for (ret0 = __extract_message(&raw, &tmp) ; ret0 == 1 ; ret0 = __extract_message(&raw, &tmp))
-				{
-					msg = malloc((strlen(tmp) + 19LU + 1LU) * sizeof(char));
-					sprintf(msg, "client %u: %s", node->id, tmp);
-					free(tmp);
-					ret1 = __send_to_all_but_one(msg, node->id, fds_write1);
-					free(msg);
-					if (ret1)
-					{
-						free(raw);
-						return EXIT_FAILURE;
-					}
-				}
-				if (ret0 == -1)
-				{
-					free(raw);
-					return EXIT_FAILURE;
-				}
-				else
-				{
-					ret0 = __send_to_all_but_one(raw, node->id, fds_write1);
-					free(raw);
-					if (ret0)
-						return EXIT_FAILURE;
-				}
-			}
+			newbuf = calloc(1, sizeof(*newbuf) * (strlen(*buf + i + 1) + 1));
+			if (newbuf == 0)
+				return (-1);
+			strcpy(newbuf, *buf + i + 1);
+			*msg = *buf;
+			(*msg)[i + 1] = 0;
+			*buf = newbuf;
+			return (1);
 		}
+		i++;
 	}
-	return EXIT_SUCCESS;
+	return (0);
 }
 
 inline static int	__highest_numbered_fd(void)
@@ -382,13 +189,198 @@ inline static int	__highest_numbered_fd(void)
 
 inline static void	__fatal_error(void)
 {
-	write(STDERR_FILENO, "Fatal error\n", 12);
+	write(STDERR_FILENO, "Fatal error\n", 12LU);
 	exit(EXIT_FAILURE);
+}
+
+////////////////////
+// Core functions //
+////////////////////
+
+__attribute__((nonnull(1, 2)))
+inline static int	__send_to_all_but_one(
+	char const *const msg,
+	fd_set const *const fds_write1,
+	t_client const *const node)
+{
+	t_client	*curr;
+
+	for (curr = g_clients.head ; curr ; curr = curr->next)
+		if (FD_ISSET(curr->fd, fds_write1) && curr != node && !~send(curr->fd, msg, strlen(msg), 0))
+			return -1;
+	return 0;
+}
+
+__attribute__((nonnull))
+inline static int	__accept_incoming_connections(
+	fd_set *const fds_read0,
+	fd_set const *const fds_read1,
+	fd_set *const fds_write0,
+	fd_set const *const fds_write1)
+{
+	static t_uint	available_id = 0U;
+	int				client_sockfd;
+	char			msg[40];
+
+	if (FD_ISSET(g_server_sockfd, fds_read1))
+	{
+		client_sockfd = accept(g_server_sockfd, NULL, NULL);
+		if (!~client_sockfd)
+			return -1;
+		
+		FD_SET(client_sockfd, fds_read0);
+		FD_SET(client_sockfd, fds_write0);
+
+		if (!~__client_lst_add_back(&g_clients, client_sockfd, available_id))
+			return -1;
+
+		if (sprintf(msg, "server: client %u just arrived\n", available_id) < 0)
+			return -1;
+
+		if (!~__send_to_all_but_one(msg, fds_write1, g_clients.tail))
+			return -1;
+
+		++available_id;
+	}
+	return 0;
+}
+
+__attribute__((nonnull))
+inline static int	__remove_client(
+	t_client *const node,
+	fd_set *const fds_read0,
+	fd_set *const fds_write0,
+	fd_set const *const fds_write1)
+{
+	t_uint const	id = node->id;
+	char			msg[37LU];
+
+	FD_CLR(node->fd, fds_read0);
+	FD_CLR(node->fd, fds_write0);
+
+	__client_lst_del_one(&g_clients, node);
+
+	if (sprintf(msg, "server: client %u just left\n", id) < 0)
+		return -1;
+
+	if (!~__send_to_all_but_one(msg, fds_write1, NULL))
+		return -1;
+
+	return 0;
+}
+
+__attribute__((nonnull))
+inline static int	__receive_client_messages(
+	fd_set *const fds_read0,
+	fd_set const *const fds_read1,
+	fd_set *const fds_write0,
+	fd_set const *const fds_write1)
+{
+	t_client		*curr;
+	t_client		*next;
+	char			buff[2LU];
+	char			*msg;
+	char			*raw;
+	char			*tmp;
+	size_t const	buff_size = sizeof(buff) - 1;
+	ssize_t			recv_ret;
+	int				ret;
+
+	raw = NULL;
+	for (curr = g_clients.head ; curr ; curr = curr->next)
+	{
+receive_loop_start:
+
+		if (FD_ISSET(curr->fd, fds_read1))
+		{
+			recv_ret = recv(curr->fd, buff, buff_size, 0);
+			while (recv_ret == (ssize_t)buff_size)
+			{
+				buff[recv_ret] = 0;
+
+				if (strstr(buff, "\n"))
+					break ;
+
+				if (!raw)
+					raw = __strdup(buff);
+				else
+				{
+					tmp = raw;
+					raw = __strjoin(raw, buff);
+					free(tmp);
+				}
+				if (!raw)
+					return -1;
+
+				recv_ret = recv(curr->fd, buff, buff_size, 0);
+			}
+			if (recv_ret <= 0)
+			{
+				free(raw);
+				next = curr->next;
+				if (!~__remove_client(curr, fds_read0, fds_write0, fds_write1))
+					return -1;
+
+				if (!next)
+					break;
+				curr = next;
+				goto receive_loop_start;
+			}
+			else
+			{
+				buff[recv_ret] = 0;
+
+				if (!raw)
+					raw = __strdup(buff);
+				else
+				{
+					tmp = raw;
+					raw = __strjoin(raw, buff);
+					free(tmp);
+				}
+				if (!raw)
+					return -1;
+
+				for (ret = __extract_message(&raw, &tmp) ; ret == 1 ; ret = __extract_message(&raw, &tmp))
+				{
+					msg = malloc((strlen(tmp) + 19 + 1) * sizeof(char));
+					if (!msg)
+					{
+						free(tmp);
+						free(raw);
+						return -1;
+					}
+
+					ret = sprintf(msg, "client %u: %s", curr->id, tmp);
+					free(tmp);
+					if (ret < 0)
+					{
+						free(raw);
+						free(msg);
+						return -1;
+					}
+
+					ret = __send_to_all_but_one(msg, fds_write1, curr);
+					free(msg);
+					if (!~ret)
+					{
+						free(raw);
+						return -1;
+					}
+				}
+				free(tmp);
+				free(raw);
+				if (!~ret)
+					return -1;
+			}
+		}
+	}
+	return 0;
 }
 
 int	main(int const ac, char const *const *const av)
 {
-	struct sockaddr_in	server_address;
+	struct sockaddr_in	server_addr;
 	fd_set				fds_read0;
 	fd_set				fds_read1;
 	fd_set				fds_write0;
@@ -396,49 +388,53 @@ int	main(int const ac, char const *const *const av)
 
 	if (ac != 2)
 	{
-		write(STDERR_FILENO, "Wrong number of arguments\n", 26);
+		write(STDERR_FILENO, "Wrong number of arguments\n", 26LU);
 		return EXIT_FAILURE;
 	}
 
-	memset(&server_address, 0, sizeof(server_address));
+	// clear file desciptor sets
 	FD_ZERO(&fds_read0);
 	FD_ZERO(&fds_write0);
-	server_address.sin_family = AF_INET;
-	server_address.sin_port = htons(atoi(av[1]));
-	server_address.sin_addr.s_addr = htonl(0x7F000001); // 127.0.0.1
 
+	// socket create and verification 
 	g_server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (g_server_sockfd == -1)
 		__fatal_error();
 	FD_SET(g_server_sockfd, &fds_read0);
 
-	if (bind(g_server_sockfd, (struct sockaddr const *)&server_address, sizeof(server_address)) == -1)
+	// assign IP, PORT 
+	memset(&server_addr, 0, sizeof(server_addr));
+	server_addr.sin_family = AF_INET; 
+	server_addr.sin_addr.s_addr = htonl(0x7F000001); //127.0.0.1
+	server_addr.sin_port = htons(atoi(av[1]));
+  
+	// binding newly created socket to given IP and verification 
+	if (!~bind(g_server_sockfd, (struct sockaddr const *)&server_addr, sizeof(server_addr)))
 		__fatal_error();
 
-	if (listen(g_server_sockfd, FD_SETSIZE - 3) == -1)
+	if (!~listen(g_server_sockfd, FD_SETSIZE - 3))
 		__fatal_error();
 
+	// server routine
 	while (true)
 	{
 		fds_read1 = fds_read0;
 		fds_write1 = fds_write0;
-		if (select(__highest_numbered_fd() + 1, &fds_read1, &fds_write1, NULL, NULL) == -1)
+		if (!~select(__highest_numbered_fd() + 1, &fds_read1, &fds_write1, NULL, NULL))
 			__fatal_error();
 
-		if (__accept_incoming_connection(&fds_read0, &fds_read1, &fds_write0, &fds_write1))
+		if (!~__accept_incoming_connections(&fds_read0, &fds_read1, &fds_write0, &fds_write1))
 			__fatal_error();
 
-		if (__receive_messages_from_clients(&fds_read0, &fds_read1, &fds_write0, &fds_write1))
+		if (!~__receive_client_messages(&fds_read0, &fds_read1, &fds_write0, &fds_write1))
 			__fatal_error();
 	}
-
 	return EXIT_SUCCESS;
 }
 
 __attribute__((destructor))
-static void	__clean_shutdown(void)
+inline static void	__clean_shutdown(void)
 {
 	__client_lst_clear(&g_clients);
-	if (g_server_sockfd != -1)
-		close(g_server_sockfd);
+	~g_server_sockfd && close(g_server_sockfd);
 }
