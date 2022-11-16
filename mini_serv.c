@@ -6,7 +6,7 @@
 /*   By: jodufour <jodufour@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/11/15 00:05:57 by jodufour          #+#    #+#             */
-/*   Updated: 2022/11/15 02:43:28 by jodufour         ###   ########.fr       */
+/*   Updated: 2022/11/15 04:48:46 by jodufour         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -278,7 +278,7 @@ inline static int	__receive_client_messages(
 {
 	t_client		*curr;
 	t_client		*next;
-	char			buff[2LU];
+	char			buff[4097LU];
 	char			*msg;
 	char			*raw;
 	char			*tmp;
